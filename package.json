@@ -2,6 +2,7 @@
   "name": "sift-web-tools",
   "version": "0.1.2",
   "description": "Pi agent web search, fetch, and save tools powered by the local sift CLI.",
+  "license": "MIT",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -12,7 +13,8 @@
   ],
   "files": [
     "extensions",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "pi": {
     "extensions": [
