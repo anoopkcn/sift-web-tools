@@ -1,0 +1,28 @@
+{
+  "name": "sift-web-tools",
+  "version": "0.1.0",
+  "description": "Pi agent web search, fetch, and save tools powered by the local sift CLI.",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-agent",
+    "sift",
+    "web-search",
+    "web-fetch"
+  ],
+  "files": [
+    "extensions",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/sift-web-tools"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "typebox": "*"
+  }
+}
