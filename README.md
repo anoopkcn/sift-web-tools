@@ -21,7 +21,7 @@ Requires the `sift` CLI to be installed and available on `$PATH`; see [Prerequis
 ## Tools
 
 - `web_search(query, max_results?)` — Runs `sift search <query> --json` (DuckDuckGo by default; SearXNG if configured) and renders the top results as a markdown list with titles, URLs, and snippets.
-- `web_fetch(url, max_chars?)` — Runs `sift fetch <url> --json` and returns the page's primary content as clean markdown, plus `title` / `final_url` / `status` / `kind` in the result details.
+- `web_fetch(url)` — Runs `sift fetch <url> --json` and returns the page's primary content as clean markdown, plus `title` / `final_url` / `status` / `kind` in the result details.
 - `web_save(url, mode?, filename?, force?)` — Runs `sift fetch <url> --out /tmp/sift-web-tools/...` and returns the saved local path instead of loading the content into context. Use it for large pages, PDFs, images, media, or files the agent should inspect later with `read`, `grep`, or `bash`. `mode` is `rendered` by default; `raw` saves original response bytes.
 - `web_artifacts(limit?)` — Lists files saved under `/tmp/sift-web-tools/`, newest first, with paths, sizes, kinds, and modification times. Also available as `/web_artifacts [limit]` (and typo-compatible `/web_artifats [limit]`).
 - `web_clean(older_than_minutes?, all?, dry_run?)` — Deletes saved artifacts. By default deletes files older than 1440 minutes; set `all: true` to delete everything or `dry_run: true` to preview matches. Also available as `/web_clean [older_than_minutes|all] [dry-run]`.
@@ -62,7 +62,7 @@ export SIFT_SEARXNG_URL="https://your-searxng.example/search" # Replace the URL 
 ## Limits
 
 - `web_search` truncates the rendered list to roughly `max_results × 1600` chars (hard ceiling 30k) to keep the agent's context tidy.
-- `web_fetch` truncates to `max_chars` (default 20000, max 100000) and appends `[truncated, full length=N]` when cut.
+- `web_fetch` returns whatever `sift fetch` produces; sift enforces its own size cap, so the extension does not re-truncate.
 - `web_save` stores artifacts under `/tmp/sift-web-tools/` and returns only path/size/mode hints to keep context small.
 - `web_save` filenames are sanitized, path components are stripped, and an 8-char URL hash is appended to reduce collisions.
 - `web_artifacts` and `web_clean` operate only on regular files directly inside `/tmp/sift-web-tools/`; they do not recurse into subdirectories.

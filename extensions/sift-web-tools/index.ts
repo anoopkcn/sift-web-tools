@@ -25,14 +25,6 @@ const WebSearchParams = Type.Object({
 
 const WebFetchParams = Type.Object({
 	url: Type.String({ description: "Absolute http(s) URL to fetch" }),
-	max_chars: Type.Optional(
-		Type.Integer({
-			minimum: 500,
-			maximum: 100000,
-			default: 20000,
-			description: "Truncate returned markdown to this many chars (default 20000).",
-		}),
-	),
 });
 
 const WebSaveParams = Type.Object({
@@ -83,7 +75,6 @@ interface SearchDetails {
 interface FetchDetails {
 	url: string;
 	length: number;
-	truncated: boolean;
 	source: "sift";
 	final_url?: string;
 	title?: string;
@@ -565,7 +556,6 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params: Static<typeof WebFetchParams>, signal, _onUpdate, _ctx) {
 			const url = params.url.trim();
-			const maxChars = params.max_chars ?? 20000;
 
 			if (!isLikelyHttpUrl(url)) {
 				throw new Error(`web_fetch rejected non-http(s) URL: ${url}`);
@@ -579,13 +569,11 @@ export default function (pi: ExtensionAPI) {
 				);
 				const payload = parseSiftJson<SiftFetchJson>(stdout);
 				const markdown = payload.markdown ?? "";
-				const { text, truncated } = truncate(markdown, maxChars);
 				return {
-					content: [{ type: "text", text: text || "(empty response)" }],
+					content: [{ type: "text", text: markdown || "(empty response)" }],
 					details: {
 						url,
 						length: markdown.length,
-						truncated,
 						source: "sift",
 						final_url: payload.final_url,
 						title: payload.title,
@@ -633,7 +621,6 @@ export default function (pi: ExtensionAPI) {
 				container.addChild(new Text(text, 0, 0));
 				if (details && !isError) {
 					const meta: string[] = [`${details.length} chars`];
-					if (details.truncated) meta.push("truncated");
 					if (details.kind) meta.push(details.kind);
 					if (typeof details.status === "number") meta.push(`HTTP ${details.status}`);
 					container.addChild(new Text(theme.fg("dim", meta.join(" · ")), 0, 0));
