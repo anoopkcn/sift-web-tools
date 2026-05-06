@@ -166,14 +166,45 @@ async function siftRun(pi: ExtensionAPI, args: string[], signal: AbortSignal | u
 	}
 }
 
-function parseSiftJson<T>(stdout: string): T {
+function parseSiftJson<T>(stdout: string, validate: (payload: unknown) => T): T {
+	let payload: unknown;
 	try {
-		return JSON.parse(stdout) as T;
+		payload = JSON.parse(stdout);
 	} catch (err) {
 		const reason = err instanceof Error ? err.message : String(err);
 		const sample = stdout.trim().slice(0, 200);
 		throw new Error(`sift returned invalid JSON (${reason}); output: ${sample}`);
 	}
+	try {
+		return validate(payload);
+	} catch (err) {
+		const reason = err instanceof Error ? err.message : String(err);
+		const sample = stdout.trim().slice(0, 200);
+		throw new Error(`sift returned unexpected schema (${reason}); output: ${sample}`);
+	}
+}
+
+function validateSearchJson(payload: unknown): SiftSearchJson {
+	if (!payload || typeof payload !== "object") throw new Error("expected object");
+	const p = payload as Record<string, unknown>;
+	if (typeof p.query !== "string") throw new Error("missing 'query' string");
+	if (!Array.isArray(p.results)) throw new Error("missing 'results' array");
+	return { query: p.query, results: p.results as SiftSearchJson["results"] };
+}
+
+function validateFetchJson(payload: unknown): SiftFetchJson {
+	if (!payload || typeof payload !== "object") throw new Error("expected object");
+	const p = payload as Record<string, unknown>;
+	if (typeof p.markdown !== "string") throw new Error("missing 'markdown' string");
+	return {
+		url: typeof p.url === "string" ? p.url : "",
+		markdown: p.markdown,
+		final_url: typeof p.final_url === "string" ? p.final_url : undefined,
+		title: typeof p.title === "string" ? p.title : undefined,
+		status: typeof p.status === "number" ? p.status : undefined,
+		kind: typeof p.kind === "string" ? p.kind : undefined,
+		fetched_at: typeof p.fetched_at === "number" ? p.fetched_at : undefined,
+	};
 }
 
 function truncate(text: string, max: number): { text: string; truncated: boolean } {
@@ -185,7 +216,12 @@ function truncate(text: string, max: number): { text: string; truncated: boolean
 }
 
 function isLikelyHttpUrl(u: string): boolean {
-	return /^https?:\/\//i.test(u);
+	try {
+		const parsed = new URL(u);
+		return parsed.protocol === "http:" || parsed.protocol === "https:";
+	} catch {
+		return false;
+	}
 }
 
 const MEDIA_EXTENSIONS = new Set([
@@ -208,6 +244,25 @@ const MEDIA_EXTENSIONS = new Set([
 ]);
 const TEXT_EXTENSIONS = new Set([".md", ".txt", ".json", ".xml", ".csv", ".tsv", ".log", ".yaml", ".yml"]);
 const SAFE_RAW_EXTENSIONS = new Set([...MEDIA_EXTENSIONS, ...TEXT_EXTENSIONS, ".pdf", ".html", ".htm"]);
+
+const MEDIA_EXT_TO_MIME: Record<string, string> = {
+	".png": "image/png",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif": "image/gif",
+	".webp": "image/webp",
+	".svg": "image/svg+xml",
+	".avif": "image/avif",
+	".bmp": "image/bmp",
+	".ico": "image/x-icon",
+	".mp3": "audio/mpeg",
+	".mp4": "video/mp4",
+	".m4a": "audio/mp4",
+	".wav": "audio/wav",
+	".webm": "video/webm",
+	".mov": "video/quicktime",
+	".ogg": "audio/ogg",
+};
 
 async function ensureArtifactDir(): Promise<void> {
 	await mkdir(ARTIFACT_DIR, { recursive: true, mode: 0o700 });
@@ -289,7 +344,8 @@ async function detectSavedKind(path: string): Promise<string> {
 	}
 
 	const ext = extname(path).toLowerCase();
-	if (MEDIA_EXTENSIONS.has(ext)) return ext.slice(1);
+	const mime = MEDIA_EXT_TO_MIME[ext];
+	if (mime) return mime;
 	if (ext === ".pdf") return "pdf";
 	if (TEXT_EXTENSIONS.has(ext)) return ext.slice(1);
 	if (ext === ".bin") return "binary";
@@ -387,6 +443,28 @@ function formatSearchResults(payload: SiftSearchJson): string {
 		.join("\n\n");
 }
 
+async function runList(limit: number): Promise<{ returned: ArtifactInfo[]; total: number }> {
+	const files = await listArtifacts();
+	const returned = files.slice(0, limit);
+	return { returned, total: files.length };
+}
+
+async function runClean(opts: { older_than_minutes: number; all: boolean; dry_run: boolean }): Promise<{ matched: ArtifactInfo[]; summary: string }> {
+	const { older_than_minutes, all, dry_run } = opts;
+	const cutoff = Date.now() - older_than_minutes * 60 * 1000;
+	const files = await listArtifacts();
+	const matched = files.filter((file) => all || file.modified < cutoff);
+	if (!dry_run) {
+		await Promise.all(matched.map((file) => unlink(file.path).catch(() => undefined)));
+	}
+	const action = dry_run ? "Would delete" : "Deleted";
+	const scope = all ? "all artifacts" : `artifacts older than ${older_than_minutes} minute(s)`;
+	const shown = matched.slice(0, 50);
+	const list = matched.length ? `\n\n${formatArtifactsList(shown, matched.length)}` : "";
+	const summary = `${action} ${matched.length} ${scope} from ${ARTIFACT_DIR}.${list}`;
+	return { matched, summary };
+}
+
 
 export default function (pi: ExtensionAPI) {
 	pi.registerMessageRenderer("sift-web-tools", (message, _options, theme) => {
@@ -401,13 +479,12 @@ export default function (pi: ExtensionAPI) {
 
 	async function showArtifactsCommand(args: string) {
 		const limit = parseLimitArg(args, 50);
-		const files = await listArtifacts();
-		const returned = files.slice(0, limit);
+		const { returned, total } = await runList(limit);
 		pi.sendMessage({
 			customType: "sift-web-tools",
-			content: formatArtifactsList(returned, files.length),
+			content: formatArtifactsList(returned, total),
 			display: true,
-			details: { title: "web_artifacts", subtitle: `${returned.length}/${files.length} artifact(s)`, kind: "artifacts" },
+			details: { title: "web_artifacts", subtitle: `${returned.length}/${total} artifact(s)`, kind: "artifacts" },
 		});
 	}
 
@@ -416,33 +493,18 @@ export default function (pi: ExtensionAPI) {
 		handler: async (args) => showArtifactsCommand(args),
 	});
 
-	pi.registerCommand("web_artifats", {
-		description: "Alias for /web_artifacts (typo-compatible). Usage: /web_artifats [limit]",
-		handler: async (args) => showArtifactsCommand(args),
-	});
-
 	pi.registerCommand("web_clean", {
 		description: "Delete saved web artifacts (usage: /web_clean [older_than_minutes|all] [dry-run])",
 		handler: async (args) => {
-			const { older_than_minutes, all, dry_run } = parseCleanArgs(args);
-			const cutoff = Date.now() - older_than_minutes * 60 * 1000;
-			const files = await listArtifacts();
-			const matched = files.filter((file) => all || file.modified < cutoff);
-			if (!dry_run) {
-				await Promise.all(matched.map((file) => unlink(file.path).catch(() => undefined)));
-			}
-
-			const action = dry_run ? "Would delete" : "Deleted";
-			const scope = all ? "all artifacts" : `artifacts older than ${older_than_minutes} minute(s)`;
-			const shown = matched.slice(0, 50);
-			const list = matched.length ? `\n\n${formatArtifactsList(shown, matched.length)}` : "";
+			const opts = parseCleanArgs(args);
+			const { matched, summary } = await runClean(opts);
 			pi.sendMessage({
 				customType: "sift-web-tools",
-				content: `${action} ${matched.length} ${scope} from ${ARTIFACT_DIR}.${list}`,
+				content: summary,
 				display: true,
 				details: {
 					title: "web_clean",
-					subtitle: dry_run ? `${matched.length} matched · dry run` : `${matched.length} deleted`,
+					subtitle: opts.dry_run ? `${matched.length} matched · dry run` : `${matched.length} deleted`,
 					kind: "clean",
 				},
 			});
@@ -482,7 +544,7 @@ export default function (pi: ExtensionAPI) {
 					],
 					signal,
 				);
-				const payload = parseSiftJson<SiftSearchJson>(stdout);
+				const payload = parseSiftJson(stdout, validateSearchJson);
 				const markdown = formatSearchResults(payload);
 				const cap = Math.min(SEARCH_HARD_CEILING, maxResults * SEARCH_PER_RESULT_BUDGET);
 				const { text, truncated } = truncate(markdown, cap);
@@ -567,7 +629,7 @@ export default function (pi: ExtensionAPI) {
 					["fetch", url, "--json", "--timeout", String(SIFT_TIMEOUT_SEC)],
 					signal,
 				);
-				const payload = parseSiftJson<SiftFetchJson>(stdout);
+				const payload = parseSiftJson(stdout, validateFetchJson);
 				const markdown = payload.markdown ?? "";
 				return {
 					content: [{ type: "text", text: markdown || "(empty response)" }],
@@ -754,13 +816,12 @@ export default function (pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params: Static<typeof WebArtifactsParams>) {
 			const limit = params.limit ?? 50;
-			const files = await listArtifacts();
-			const returned = files.slice(0, limit);
+			const { returned, total } = await runList(limit);
 			return {
-				content: [{ type: "text", text: formatArtifactsList(returned, files.length) }],
+				content: [{ type: "text", text: formatArtifactsList(returned, total) }],
 				details: {
 					artifact_dir: ARTIFACT_DIR,
-					total: files.length,
+					total,
 					returned: returned.length,
 					files: returned,
 				} satisfies ArtifactsDetails,
@@ -813,28 +874,19 @@ export default function (pi: ExtensionAPI) {
 		executionMode: "sequential",
 
 		async execute(_toolCallId, params: Static<typeof WebCleanParams>) {
-			const all = params.all ?? false;
-			const dryRun = params.dry_run ?? false;
-			const olderThanMinutes = params.older_than_minutes ?? 1440;
-			const cutoff = Date.now() - olderThanMinutes * 60 * 1000;
-			const files = await listArtifacts();
-			const matched = files.filter((file) => all || file.modified < cutoff);
-
-			if (!dryRun) {
-				await Promise.all(matched.map((file) => unlink(file.path).catch(() => undefined)));
-			}
-
-			const action = dryRun ? "Would delete" : "Deleted";
-			const scope = all ? "all artifacts" : `artifacts older than ${olderThanMinutes} minute(s)`;
-			const shown = matched.slice(0, 50);
-			const list = matched.length ? `\n\n${formatArtifactsList(shown, matched.length)}` : "";
+			const opts = {
+				all: params.all ?? false,
+				dry_run: params.dry_run ?? false,
+				older_than_minutes: params.older_than_minutes ?? 1440,
+			};
+			const { matched, summary } = await runClean(opts);
 			return {
-				content: [{ type: "text", text: `${action} ${matched.length} ${scope} from ${ARTIFACT_DIR}.${list}` }],
+				content: [{ type: "text", text: summary }],
 				details: {
 					artifact_dir: ARTIFACT_DIR,
 					matched: matched.length,
-					deleted: dryRun ? 0 : matched.length,
-					dry_run: dryRun,
+					deleted: opts.dry_run ? 0 : matched.length,
+					dry_run: opts.dry_run,
 					files: matched,
 				} satisfies CleanDetails,
 			};
@@ -878,3 +930,20 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 }
+
+export const _testing = {
+	parseSiftJson,
+	validateSearchJson,
+	validateFetchJson,
+	truncate,
+	isLikelyHttpUrl,
+	safeSlug,
+	urlPathParts,
+	pickArtifactExtension,
+	detectSavedKind,
+	formatArtifactLine,
+	formatArtifactsList,
+	parseLimitArg,
+	parseCleanArgs,
+	formatSearchResults,
+};

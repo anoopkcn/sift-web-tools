@@ -21,10 +21,22 @@
       "./extensions/sift-web-tools"
     ]
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types extensions/sift-web-tools/index.test.ts"
+  },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
-    "typebox": "*"
+    "@mariozechner/pi-ai": ">=0.58.0",
+    "@mariozechner/pi-coding-agent": ">=0.58.0",
+    "@mariozechner/pi-tui": ">=0.58.0",
+    "typebox": ">=1.0.0"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-ai": ">=0.58.0",
+    "@mariozechner/pi-coding-agent": ">=0.58.0",
+    "@mariozechner/pi-tui": ">=0.58.0",
+    "@types/node": ">=22.0.0",
+    "typebox": ">=1.0.0",
+    "typescript": ">=5.5.0"
   }
 }
