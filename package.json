@@ -1,6 +1,6 @@
 {
   "name": "sift-web-tools",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Pi agent web search, fetch, and save tools powered by the local sift CLI.",
   "license": "MIT",
   "keywords": [
